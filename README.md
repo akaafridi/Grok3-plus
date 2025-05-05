@@ -3,7 +3,7 @@
 **Author:** [Mohd Ibrahim Afridi](mailto:afridiibrahim12@outlook.com)  
 **DOI:** [10.5281/zenodo.15341810](https://zenodo.org/records/15341810)  
 **GitHub Repo:** [akaafridi/Grok3-plus](https://github.com/akaafridi/Grok3-plus)  
-**License:** CC BY 4.0
+**License:** MIT
 
 ---
 
