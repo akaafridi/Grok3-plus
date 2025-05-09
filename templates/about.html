@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Architecture | Grok-3+</title>
+    <link rel="stylesheet" href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css">
+    <style>
+        .section-header {
+            margin-top: 2rem;
+            margin-bottom: 1.5rem;
+        }
+        .code-block {
+            border-radius: 0.5rem;
+            background-color: var(--bs-tertiary-bg);
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .architecture-diagram {
+            width: 100%;
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 1rem;
+            background-color: var(--bs-tertiary-bg);
+            border-radius: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">Grok-3+</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/about">Architecture</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/benchmarks">Benchmarks</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="https://github.com/yourusername/grok3p" target="_blank">GitHub</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container py-5">
+        <h1 class="mb-4">Grok-3+ Architecture</h1>
+        
+        <p class="lead">
+            Grok-3+ introduces two key innovations to improve the efficiency and scalability of transformer language models: 
+            <strong>FP8 precision</strong> for reduced memory usage and <strong>Mixture-of-Experts (MoE)</strong> routing for increased model capacity.
+        </p>
+
+        <!-- FP8 Precision Section -->
+        <h2 class="section-header">FP8 Precision</h2>
+        <div class="row">
+            <div class="col-lg-7">
+                <p>
+                    FP8 (8-bit floating point) precision significantly reduces memory usage and computational requirements without substantial loss in model quality. 
+                    Our implementation includes:
+                </p>
+                <ul>
+                    <li><strong>Custom Quantization:</strong> Automatic conversion between FP32/FP16 and FP8 formats</li>
+                    <li><strong>Dynamic Scaling:</strong> Adaptive scale factors to maintain representation accuracy</li>
+                    <li><strong>Backward Pass Compatibility:</strong> Gradient computation with appropriate scaling</li>
+                </ul>
+                <p>
+                    The FP8 format uses 1 bit for the sign, 4 bits for the exponent, and 3 bits for the mantissa (e4m3 format),
+                    providing a good balance between precision and memory efficiency.
+                </p>
+            </div>
+            <div class="col-lg-5">
+                <div class="code-block">
+                    <pre><code>class FP8Linear(nn.Module):
+    """
+    Linear layer with FP8 precision.
+    """
+    def __init__(self, in_features, out_features, bias=True):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        
+        # Create scaling factors
+        self.input_scaling = FP8ScalingFactor()
+        self.weight_scaling = FP8ScalingFactor()
+        self.output_scaling = FP8ScalingFactor()
+        
+        # Initialize parameters
+        self.weight = nn.Parameter(torch.empty(
+            (out_features, in_features)))
+        self.bias = nn.Parameter(torch.empty(out_features))
+                
+    def forward(self, input):
+        # Quantize to FP8
+        fp8_input = quantize_to_fp8(input, self.input_scaling.scale)
+        fp8_weight = quantize_to_fp8(self.weight, self.weight_scaling.scale)
+        
+        # Matrix multiplication
+        output = F.linear(fp8_input, fp8_weight, self.bias)
+        
+        return output</code></pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- MoE Section -->
+        <h2 class="section-header">Mixture-of-Experts (MoE)</h2>
+        <div class="row">
+            <div class="col-lg-7">
+                <p>
+                    The MoE architecture allows for increased model capacity without a proportional increase in computational cost.
+                    Each token is processed by only a subset of the available "expert" networks:
+                </p>
+                <ul>
+                    <li><strong>Top-K Routing:</strong> Each token is sent to the K most relevant experts (default K=2)</li>
+                    <li><strong>Load Balancing:</strong> Auxiliary loss encourages uniform expert utilization</li>
+                    <li><strong>Sparse Activation:</strong> Only a small subset of the model's parameters are used for each token</li>
+                </ul>
+                <p>
+                    In Grok-3+, MoE is applied to the feed-forward networks in selected transformer layers, 
+                    typically every third layer, allowing for efficient scaling of model capacity.
+                </p>
+            </div>
+            <div class="col-lg-5">
+                <div class="code-block">
+                    <pre><code>class MixtureOfExperts(nn.Module):
+    """
+    MoE layer with Top-K routing.
+    """
+    def __init__(self, hidden_size, intermediate_size, 
+                num_experts=8, num_experts_per_tok=2):
+        super().__init__()
+        
+        # Create router
+        self.router = MoERouter(
+            hidden_size, 
+            num_experts,
+            num_experts_per_tok
+        )
+        
+        # Create experts
+        self.experts = nn.ModuleList([
+            MoEExpert(
+                hidden_size,
+                intermediate_size
+            )
+            for _ in range(num_experts)
+        ])
+        
+    def forward(self, hidden_states):
+        # Get routing weights
+        dispatch_mask, combine_weights, aux_loss = self.router(hidden_states)
+        
+        # Process through selected experts
+        expert_outputs = process_experts(hidden_states, self.experts, dispatch_mask)
+        
+        # Combine outputs
+        output = combine_expert_outputs(expert_outputs, combine_weights)
+        
+        return output, aux_loss</code></pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Model Architecture Diagram -->
+        <h2 class="section-header">Overall Architecture</h2>
+        <div class="row justify-content-center">
+            <div class="col-lg-10">
+                <p>
+                    The Grok-3+ architecture combines a standard transformer backbone with FP8 precision and MoE routing.
+                    The model consists of multiple layers, with selected layers using MoE instead of standard feed-forward networks.
+                </p>
+                
+                <div class="architecture-diagram text-center">
+                    <svg width="700" height="500" viewBox="0 0 700 500">
+                        <!-- Background -->
+                        <rect x="50" y="50" width="600" height="400" fill="none" stroke="#6c757d" stroke-width="2" rx="10" />
+                        
+                        <!-- Layer boxes -->
+                        <g transform="translate(100, 100)">
+                            <!-- Input Embeddings -->
+                            <rect x="0" y="0" width="500" height="40" fill="#0d6efd" opacity="0.2" stroke="#0d6efd" stroke-width="2" rx="5" />
+                            <text x="200" y="25" text-anchor="middle" fill="currentColor">Input Embeddings</text>
+                            
+                            <!-- Transformer Layers -->
+                            <!-- Layer 1 -->
+                            <rect x="0" y="60" width="500" height="100" fill="none" stroke="#6c757d" stroke-width="2" rx="5" />
+                            <rect x="20" y="70" width="460" height="30" fill="#20c997" opacity="0.2" stroke="#20c997" stroke-width="2" rx="5" />
+                            <text x="250" y="90" text-anchor="middle" fill="currentColor">Multi-Head Attention (FP8)</text>
+                            <rect x="20" y="120" width="460" height="30" fill="#ffc107" opacity="0.2" stroke="#ffc107" stroke-width="2" rx="5" />
+                            <text x="250" y="140" text-anchor="middle" fill="currentColor">Feed-Forward Network (FP8)</text>
+                            
+                            <!-- Layer 2 with MoE -->
+                            <rect x="0" y="180" width="500" height="100" fill="none" stroke="#6c757d" stroke-width="2" rx="5" />
+                            <rect x="20" y="190" width="460" height="30" fill="#20c997" opacity="0.2" stroke="#20c997" stroke-width="2" rx="5" />
+                            <text x="250" y="210" text-anchor="middle" fill="currentColor">Multi-Head Attention (FP8)</text>
+                            <rect x="20" y="240" width="460" height="30" fill="#fd7e14" opacity="0.2" stroke="#fd7e14" stroke-width="2" rx="5" />
+                            <text x="250" y="260" text-anchor="middle" fill="currentColor">Mixture-of-Experts (FP8)</text>
+                            
+                            <!-- Output -->
+                            <rect x="0" y="300" width="500" height="40" fill="#0d6efd" opacity="0.2" stroke="#0d6efd" stroke-width="2" rx="5" />
+                            <text x="250" y="325" text-anchor="middle" fill="currentColor">Output Projection (FP8)</text>
+                        </g>
+                        
+                        <!-- Layer labels -->
+                        <text x="50" y="125" text-anchor="end" fill="currentColor">Layer 1</text>
+                        <text x="50" y="245" text-anchor="end" fill="currentColor">Layer 2 (MoE)</text>
+                        
+                        <!-- Dots for more layers -->
+                        <text x="350" y="400" text-anchor="middle" fill="currentColor">. . .</text>
+                    </svg>
+                </div>
+                
+                <p>
+                    The key components of each layer are:
+                </p>
+                <ul>
+                    <li><strong>FP8 Linear Layers:</strong> All linear transformations use FP8 precision for efficiency</li>
+                    <li><strong>Multi-Head Attention:</strong> Standard transformer attention with rotary position embeddings</li>
+                    <li><strong>Feed-Forward/MoE:</strong> Either standard feed-forward networks or MoE layers depending on the configuration</li>
+                    <li><strong>Layer Normalization:</strong> Before each sub-layer for training stability</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="py-4 bg-dark">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6">
+                    <p class="mb-0">Grok-3+ Implementation</p>
+                    <p class="text-secondary small">Based on DOI: 10.5281/zenodo.15341810</p>
+                </div>
+                <div class="col-md-6 text-md-end">
+                    <p class="mb-0">MIT License</p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
